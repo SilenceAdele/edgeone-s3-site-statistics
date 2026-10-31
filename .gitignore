@@ -1,0 +1,16 @@
+# 本地密钥 —— 永远不要提交
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.conf
+imgup.conf
+
+# 依赖 / 构建
+node_modules/
+dist/
+.edgeone/
+
+# 系统
+.DS_Store

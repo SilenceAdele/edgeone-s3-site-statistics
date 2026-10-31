@@ -1,0 +1,15 @@
+{
+  "name": "edgeone-s3-site-statistics",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted site statistics (PV/UV) for a static blog, backed by S3 and served from EdgeOne Pages Edge Functions",
+  "license": "MIT",
+  "dependencies": {
+    "@edgeone/pages-blob": "^0.0.18"
+  },
+  "scripts": {
+    "test": "node test-local.mjs",
+    "test:s3": "node test.mjs"
+  }
+}

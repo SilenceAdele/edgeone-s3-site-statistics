@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>站点统计 · 自检</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --card: #fff;
+        --fg: #1f2328;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #2563eb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #15181c;
+          --card: #1c2025;
+          --fg: #e6e8eb;
+          --muted: #9aa4b2;
+          --line: #2c3238;
+          --accent: #6ea8fe;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 32px 20px 64px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+      main { max-width: 860px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      p.sub { color: var(--muted); margin: 0 0 24px; }
+      form { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+      input[type="text"] {
+        flex: 1 1 320px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        color: var(--fg);
+        font: inherit;
+      }
+      button {
+        padding: 9px 16px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:active { transform: translateY(1px); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+      }
+      .card .k { color: var(--muted); font-size: 12px; letter-spacing: .02em; }
+      .card .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      h2 { font-size: 14px; margin: 28px 0 10px; color: var(--muted); font-weight: 600; }
+      pre {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+        overflow: auto;
+        font-size: 12px;
+        margin: 0;
+      }
+      .err { color: #d14343; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>站点统计 · 自检</h1>
+      <p class="sub">
+        直接调用 <code>/api/stats</code>，确认部署后的计数是否正常。按回车或点“查询”。
+      </p>
+
+      <form id="f">
+        <input id="p" type="text" value="/" aria-label="页面路径" />
+        <button type="submit">查询</button>
+      </form>
+
+      <div class="grid" id="cards"></div>
+
+      <h2>原始响应</h2>
+      <pre id="raw">—</pre>
+    </main>
+
+    <script>
+      const cards = document.getElementById('cards');
+      const raw = document.getElementById('raw');
+      const input = document.getElementById('p');
+
+      input.value = new URLSearchParams(location.search).get('p') || '/';
+
+      function tile(key, value) {
+        const el = document.createElement('div');
+        el.className = 'card';
+        const k = document.createElement('div');
+        k.className = 'k';
+        k.textContent = key;
+        const v = document.createElement('div');
+        v.className = 'v';
+        v.textContent = value;
+        el.append(k, v);
+        return el;
+      }
+
+      async function load(path) {
+        const started = performance.now();
+        cards.replaceChildren();
+        raw.className = '';
+        raw.textContent = '加载中…';
+        try {
+          const res = await fetch('/api/stats?p=' + encodeURIComponent(path), {
+            headers: { accept: 'application/json' },
+          });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error || 'HTTP ' + res.status);
+          const ms = Math.round(performance.now() - started);
+          cards.append(
+            tile('站点访问量', body.site_pv),
+            tile('站点访客数', body.site_uv),
+            tile('本页访问量', body.page_pv),
+            tile('本页访客数', body.page_uv),
+            tile('今日站内 PV', body.today.site_pv),
+            tile('昨日站内 PV', body.yesterday.site_pv),
+          );
+          raw.textContent =
+            JSON.stringify(body, null, 2) + '\n\n// ' + ms + ' ms · ' + path;
+        } catch (e) {
+          raw.className = 'err';
+          raw.textContent = String(e.message || e);
+        }
+      }
+
+      document.getElementById('f').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        load(input.value.trim() || '/');
+      });
+      load(input.value || '/');
+    </script>
+  </body>
+</html>
