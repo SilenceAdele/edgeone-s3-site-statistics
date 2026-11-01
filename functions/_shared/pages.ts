@@ -332,7 +332,7 @@ const GATE_STYLE = `
          background:radial-gradient(35% 35% at 30% 40%,#9dc6ff 0,transparent 70%),
                     radial-gradient(30% 30% at 75% 60%,#e2c8ff 0,transparent 70%);
          filter:blur(46px)}
-    form{position:relative;width:min(400px,calc(100vw - 40px));padding:30px 28px 26px;
+    form,.card{position:relative;width:min(400px,calc(100vw - 40px));padding:30px 28px 26px;
          background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.8);border-radius:16px;
          box-shadow:0 24px 60px rgba(44,62,80,.18);
          -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%)}
@@ -359,7 +359,11 @@ const GATE_STYLE = `
           background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer;
           box-shadow:0 8px 20px rgba(64,158,255,.35)}
     button.go:hover{filter:brightness(1.05)}
-    p.meta{margin:14px 0 0;color:var(--muted);font-size:12px;text-align:center}`;
+    p.meta{margin:14px 0 0;color:var(--muted);font-size:12px;text-align:center}
+    .card{text-align:center}
+    .card p.lead{margin-bottom:0}
+    code{padding:1px 5px;border-radius:5px;background:rgba(44,62,80,.08);
+         font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}`;
 
 /** The token prompt shown for "/" and "/dashboard.html". */
 export function gatePage(action: string, error: string): string {
@@ -388,7 +392,6 @@ export function gatePage(action: string, error: string): string {
     </button>
   </div>
   <button type="submit" class="go">进入</button>
-  <p class="meta">令牌即 STATS_ACCESS_TOKEN；未配置时本页无需令牌。</p>
 </form>
 <script>
   var input = document.getElementById('token');
@@ -402,6 +405,34 @@ export function gatePage(action: string, error: string): string {
     input.focus();
   });
 </script>
+</body>
+</html>`;
+}
+
+/**
+ * Shown instead of the pages when STATS_ACCESS_TOKEN is missing. The pages fail
+ * closed: without a token they must not expose the dashboard to the public.
+ */
+export function disabledPage(): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>统计页面未启用</title>
+<style>${GATE_STYLE}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>统计页面未启用</h1>
+  <p class="lead">
+    部署环境没有配置 <code>STATS_ACCESS_TOKEN</code>，页面默认关闭。<br>
+    在 EdgeOne 控制台的「环境变量」里加上它（可用 <code>openssl rand -hex 24</code> 生成），
+    重新部署后即可访问。
+  </p>
+</div>
 </body>
 </html>`;
 }

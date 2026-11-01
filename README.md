@@ -86,8 +86,8 @@ definition that stays privacy-preserving without cookies.
 | `/api/stats` | GET | `?p=/path/`. Returns the counters plus `today` / `yesterday` and `servedAt`. `cache-control: no-store`. |
 | `/jsonp` | GET | `?callback=<identifier>&p=`. The callback must match `^[A-Za-z_$][A-Za-z0-9_$]{0,63}$`; anything else is `400`. No callback name is hardcoded, so any prefix works. |
 | `/api/aggregate` | POST | Requires `?token=` or `x-stats-token`. Returns the number of events, days and months it processed. |
-| `/` | GET | Landing page. Gated by `STATS_ACCESS_TOKEN` when it is set; accepts `?token=` or the `x-stats-token` header, and stores a 12-hour `HttpOnly` cookie on success. |
-| `/dashboard.html` | GET | Self-check page that calls `/api/stats`. Same gate and cookie as `/`. |
+| `/` | GET | Landing page. Requires `STATS_ACCESS_TOKEN`: without it the route answers `503`. Accepts `?token=` or the `x-stats-token` header, and stores a 12-hour `HttpOnly` cookie on success. |
+| `/dashboard.html` | GET | Self-check page that calls `/api/stats`. Same gate and cookie as `/`, and the same `503` when the token is missing. |
 | `/api/health` | GET | Missing variables, active warnings, prefix, bucket, snapshot store. Stays public and never echoes secrets. |
 
 Response body of `/api/stats`:
@@ -109,8 +109,9 @@ up. Both pages are served by the function from `functions/_shared/pages.ts`
 rather than `public/`: EdgeOne serves static files before functions, so a static
 page could never be token-gated. `functions/index.ts` re-exports the handler
 because EdgeOne maps only `index.ts` to the root path; a catch-all does not cover
-`/`. If `STATS_ACCESS_TOKEN` is set, both pages answer `401` with a token prompt
-until it checks out.
+`/`. Both pages fail closed: with `STATS_ACCESS_TOKEN` set they answer `401`
+with a token prompt, and when it is missing they answer `503` instead of
+rendering anything.
 
 ## Deployment
 
@@ -118,8 +119,8 @@ until it checks out.
 2. **Project → Settings → Environment Variables** — configure the table below.
 3. Point a domain at it, e.g. `stats.example.com`.
 4. Open `https://stats.example.com/api/health` (expect `"ok": true` and
-   `"s3Ready": true`), then `/` — it asks for `STATS_ACCESS_TOKEN` when that
-   variable is set — and open `/dashboard.html` from there.
+   `"s3Ready": true`), then `/` — it asks for `STATS_ACCESS_TOKEN`; without that
+   variable both pages answer `503` — and open `/dashboard.html` from there.
 
 `/api/health` issues one LIST against the bucket. If `s3Ready` is `false`, the
 credentials, bucket, endpoint or `UA_PREFIX` are wrong — a common mistake is
@@ -144,7 +145,7 @@ All credentials come from environment variables only. No secret is hardcoded.
 | `STATS_SALT` | **strongly recommended** | HMAC key for visitor hashes. 32+ random characters. |
 | `STATS_ORIGINS` | **strongly recommended** | Comma-separated origins allowed to POST hits. Empty = anyone may. |
 | `STATS_TOKEN` | recommended | Protects `POST /api/aggregate`. Empty = that route is disabled (`403`). |
-| `STATS_ACCESS_TOKEN` | recommended | Protects the human pages `/` and `/dashboard.html`. Empty = both pages stay public. Independent from `STATS_TOKEN`; set both (the same value is fine) when you want everything locked. |
+| `STATS_ACCESS_TOKEN` | **yes** | Protects the human pages `/` and `/dashboard.html`. Empty = both pages answer `503` (fail closed). Generate with `openssl rand -hex 24`. Independent from `STATS_TOKEN`; the same value is fine. |
 | `STATS_TZ_OFFSET` | no | Hours offset deciding the calendar day. Default `8` (Asia/Shanghai). |
 | `STATS_KEEP_DAYS` | no | Raw events are deleted this many days after their day ends. Default `7`. Daily/month/total files are never deleted. |
 | `STATS_SNAPSHOT_TTL_MS` | no | How long a snapshot is served before a background rebuild. Default `60000`. |
@@ -157,15 +158,17 @@ All credentials come from environment variables only. No secret is hardcoded.
 
 ### Access tokens
 
-`STATS_TOKEN` and `STATS_ACCESS_TOKEN` are independent and either may be left
-empty to disable that feature alone:
+`STATS_ACCESS_TOKEN` is required; `STATS_TOKEN` is optional. They are
+independent:
 
+- `STATS_ACCESS_TOKEN` locks `/` and `/dashboard.html`. It is mandatory: while it
+  is empty both pages answer `503` and never render, so a deployment cannot leak
+  the dashboard. After one successful login the browser keeps a 12-hour
+  `HttpOnly` cookie holding a hash of the token, so moving from the landing page
+  to the dashboard does not ask again.
 - `STATS_TOKEN` unlocks `POST /api/aggregate` only. Without it the route answers
-  `403`.
-- `STATS_ACCESS_TOKEN` locks `/` and `/dashboard.html`. Without it both pages are
-  public. After one successful login the browser keeps a 12-hour `HttpOnly`
-  cookie holding a hash of the token, so moving from the landing page to the
-  dashboard does not ask again.
+  `403`. Nothing else calls that route — the blog only uses `/api/hit` and
+  `/api/stats` — so leaving it empty merely turns off the manual rebuild.
 
 Generate either with `openssl rand -hex 24`; they may share a value, but then
 changing it invalidates logins and the aggregate token at once. Both take effect
@@ -358,9 +361,10 @@ traffic, not with wall-clock time: an idle blog costs nothing.
   reusing a full-control key.
 - Rotating `STATS_SALT` changes the visitor hashes: UV for the current day
   restarts from zero, historical numbers stay as they were.
-- `STATS_ACCESS_TOKEN` only hides the two human pages; `/api/stats` stays public
-  because the blog reads it in every visitor's browser. Changing the token
-  invalidates the login cookie.
+- `STATS_ACCESS_TOKEN` is mandatory and the pages fail closed without it. It only
+  hides the two human pages, though: `/api/stats` stays public because the blog
+  reads it in every visitor's browser. Changing the token invalidates the login
+  cookie.
 - Raw IPs are only used in memory to compute the daily hash; they are never
   written to storage or logged.
 

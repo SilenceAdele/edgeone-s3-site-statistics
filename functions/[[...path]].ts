@@ -16,8 +16,8 @@
  *
  * The two HTML pages live in ./_shared/pages.ts rather than public/: EdgeOne
  * serves static files before functions, so a static page could never be
- * token-gated. STATS_ACCESS_TOKEN protects them; when it is empty they stay
- * open, which is the behaviour before the gate existed.
+ * token-gated. STATS_ACCESS_TOKEN protects them; without it they answer 503
+ * instead of rendering, so the dashboard is never exposed by accident.
  *
  * The response shape matches what vitepress-theme-teek's `docAnalysis` expects
  * (`site_pv`, `site_uv`, `page_pv`, `page_uv`, `today`, `yesterday`), so the
@@ -27,7 +27,7 @@
  */
 
 import { getBlobStore } from './_shared/blob.ts';
-import { gatePage, pageFor } from './_shared/pages.ts';
+import { disabledPage, gatePage, pageFor } from './_shared/pages.ts';
 import { readS3Config, s3Request, type S3Config } from './_shared/s3.ts';
 import { sha256Hex } from './_shared/sigv4.ts';
 import { aggregate, getStats, recordHit, type StatsConfig } from './_shared/stats.ts';
@@ -228,7 +228,7 @@ async function handleAggregate(
   return json({ ok: true, ...result }, 200, { ...cors, 'cache-control': 'no-store' });
 }
 
-/** Serves "/" and "/dashboard.html", behind STATS_ACCESS_TOKEN when it is set. */
+/** Serves "/" and "/dashboard.html"; requires STATS_ACCESS_TOKEN to render. */
 async function handlePage(
   ctx: FnContext,
   cfg: ServiceConfig,
@@ -244,9 +244,9 @@ async function handlePage(
   const body = pageFor(path) || '';
 
   if (ctx.request.method.toUpperCase() === 'HEAD') {
-    return new Response(null, { status: 200, headers });
+    return new Response(null, { status: cfg.accessToken ? 200 : 503, headers });
   }
-  if (!cfg.accessToken) return new Response(body, { status: 200, headers });
+  if (!cfg.accessToken) return new Response(disabledPage(), { status: 503, headers });
 
   const provided =
     ctx.request.headers.get('x-stats-token') ||
@@ -323,7 +323,7 @@ async function readConfig(env: Record<string, string | undefined>): Promise<Serv
   const accessToken = env.STATS_ACCESS_TOKEN || '';
   if (!accessToken) {
     warnings.push(
-      'STATS_ACCESS_TOKEN is not set: "/" and "/dashboard.html" are public to anyone with the URL',
+      'STATS_ACCESS_TOKEN is not set: "/" and "/dashboard.html" answer 503 until it is configured',
     );
   }
 

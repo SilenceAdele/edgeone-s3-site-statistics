@@ -300,8 +300,12 @@ const gatedEnv = { STATS_ACCESS_TOKEN: 'page-secret' };
 
 const openRoot = await page('/', { env: openEnv });
 const openRootText = await openRoot.text();
-check('25. root page is public when STATS_ACCESS_TOKEN is empty',
-  openRoot.status === 200 && openRootText.includes('href="/dashboard.html"'));
+const openDash = await page('/dashboard.html', { env: openEnv });
+check('25. pages fail closed when STATS_ACCESS_TOKEN is empty',
+  openRoot.status === 503 &&
+  openDash.status === 503 &&
+  openRootText.includes('STATS_ACCESS_TOKEN') &&
+  !openRootText.includes('href="/dashboard.html"'));
 
 const gate = await page('/', { env: gatedEnv });
 const gateText = await gate.text();
@@ -335,8 +339,13 @@ check('31. the dashboard is gated too', dashGate.status === 401);
 
 const health = await page('/api/health', { env: gatedEnv });
 const healthBody = await health.json();
+const openHealth = await page('/api/health', { env: openEnv });
+const openHealthBody = await openHealth.json();
 check('32. health stays public and reports the gate',
-  health.status === 200 && healthBody.pagesProtected === true);
+  health.status === 200 &&
+  healthBody.pagesProtected === true &&
+  openHealthBody.pagesProtected === false &&
+  openHealthBody.warnings.some((w) => w.includes('STATS_ACCESS_TOKEN')));
 
 const rootEntry = await import('./functions/index.ts');
 check('33. functions/index.ts points at the same handler',
