@@ -286,6 +286,62 @@ check('24. text/plain beacon body is accepted',
   soft.status === 204 && c.page_pv === 1,
   `page_pv=${c.page_pv}`);
 
+// ---- token gate on the human pages --------------------------------------
+const page = (path, { env: override = {}, headers = {} } = {}) =>
+  onRequest({
+    request: new Request(BASE + path, { method: 'GET', headers }),
+    params: {},
+    env: { ...env, ...override },
+    eo: { clientIp: '203.0.113.9' },
+  });
+
+const openEnv = { STATS_ACCESS_TOKEN: '' };
+const gatedEnv = { STATS_ACCESS_TOKEN: 'page-secret' };
+
+const openRoot = await page('/', { env: openEnv });
+const openRootText = await openRoot.text();
+check('25. root page is public when STATS_ACCESS_TOKEN is empty',
+  openRoot.status === 200 && openRootText.includes('href="/dashboard.html"'));
+
+const gate = await page('/', { env: gatedEnv });
+const gateText = await gate.text();
+check('26. root asks for the token',
+  gate.status === 401 && gateText.includes('name="token"') && !gateText.includes('edgeone-s3-site-statistics'));
+
+const wrong = await page('/?token=nope', { env: gatedEnv });
+const wrongText = await wrong.text();
+check('27. a wrong token is refused and never echoed',
+  wrong.status === 401 && wrongText.includes('令牌不正确') && !wrongText.includes('nope'));
+
+const good = await page('/?token=page-secret', { env: gatedEnv });
+const goodText = await good.text();
+const cookie = good.headers.get('set-cookie') || '';
+check('28. the right token renders the landing page',
+  good.status === 200 && goodText.includes('href="/dashboard.html"'));
+check('29. login sets an HttpOnly cookie that hides the raw token',
+  /stats_access=/.test(cookie) && /HttpOnly/.test(cookie) && !cookie.includes('page-secret'));
+
+const cookieValue = /stats_access=([^;]+)/.exec(cookie)?.[1] || '';
+const dash = await page('/dashboard.html', {
+  env: gatedEnv,
+  headers: { cookie: `stats_access=${cookieValue}` },
+});
+const dashText = await dash.text();
+check('30. the cookie opens the dashboard',
+  dash.status === 200 && dashText.includes('站点统计'));
+
+const dashGate = await page('/dashboard.html', { env: gatedEnv });
+check('31. the dashboard is gated too', dashGate.status === 401);
+
+const health = await page('/api/health', { env: gatedEnv });
+const healthBody = await health.json();
+check('32. health stays public and reports the gate',
+  health.status === 200 && healthBody.pagesProtected === true);
+
+const rootEntry = await import('./functions/index.ts');
+check('33. functions/index.ts points at the same handler',
+  rootEntry.onRequest === onRequest);
+
 console.log();
 console.log(pass ? 'All passed' : 'Some assertions failed');
 process.exit(pass ? 0 : 1);

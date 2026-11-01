@@ -10,7 +10,14 @@
  *   GET  /api/stats?p=/posts/foo/    counters as JSON       -> 200
  *   GET  /jsonp?callback=X&p=/...    counters as JSONP      -> 200
  *   POST /api/aggregate?token=...    force a rebuild         -> 200
+ *   GET  /?token=                    landing page (token)   -> 200
+ *   GET  /dashboard.html?token=      self-check page        -> 200
  *   GET  /api/health                 config sanity check    -> 200
+ *
+ * The two HTML pages live in ./_shared/pages.ts rather than public/: EdgeOne
+ * serves static files before functions, so a static page could never be
+ * token-gated. STATS_ACCESS_TOKEN protects them; when it is empty they stay
+ * open, which is the behaviour before the gate existed.
  *
  * The response shape matches what vitepress-theme-teek's `docAnalysis` expects
  * (`site_pv`, `site_uv`, `page_pv`, `page_uv`, `today`, `yesterday`), so the
@@ -20,7 +27,9 @@
  */
 
 import { getBlobStore } from './_shared/blob.ts';
+import { gatePage, pageFor } from './_shared/pages.ts';
 import { readS3Config, s3Request, type S3Config } from './_shared/s3.ts';
+import { sha256Hex } from './_shared/sigv4.ts';
 import { aggregate, getStats, recordHit, type StatsConfig } from './_shared/stats.ts';
 
 /** EdgeOne Edge Function context (hand-written to avoid a type dependency). */
@@ -36,6 +45,10 @@ const SERVICE = 'edgeone-s3-site-statistics';
 const CALLBACK_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const PREFIX_RE = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
 
+/** Login cookie for the gated pages; holds sha256(STATS_ACCESS_TOKEN). */
+const ACCESS_COOKIE = 'stats_access';
+const ACCESS_COOKIE_TTL = 12 * 60 * 60;
+
 // Per-isolate throttle for background rebuilds: without it, a Blob-less
 // deployment would recompute aggregates on every single request.
 let lastAggregateAt = 0;
@@ -43,6 +56,7 @@ let lastAggregateAt = 0;
 interface ServiceConfig extends StatsConfig {
   origins: string[];
   token: string;
+  accessToken: string;
   missing: string[];
   warnings: string[];
   blobEnabled: boolean;
@@ -68,8 +82,13 @@ async function handle(ctx: FnContext): Promise<Response> {
 
   if (method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
-  if (path === '/' || path === '/api/health') {
+  if (path === '/api/health') {
     return json(await healthPayload(cfg, url), 200, { ...cors, 'cache-control': 'no-store' });
+  }
+
+  if (path === '/' || path === '/dashboard.html') {
+    if (method !== 'GET' && method !== 'HEAD') return methodNotAllowed(cors);
+    return handlePage(ctx, cfg, url, path);
   }
 
   if (cfg.missing.length) {
@@ -209,6 +228,48 @@ async function handleAggregate(
   return json({ ok: true, ...result }, 200, { ...cors, 'cache-control': 'no-store' });
 }
 
+/** Serves "/" and "/dashboard.html", behind STATS_ACCESS_TOKEN when it is set. */
+async function handlePage(
+  ctx: FnContext,
+  cfg: ServiceConfig,
+  url: URL,
+  path: string,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer',
+    'x-robots-tag': 'noindex, nofollow',
+  };
+  const body = pageFor(path) || '';
+
+  if (ctx.request.method.toUpperCase() === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  if (!cfg.accessToken) return new Response(body, { status: 200, headers });
+
+  const provided =
+    ctx.request.headers.get('x-stats-token') ||
+    url.searchParams.get('token') ||
+    readCookie(ctx.request, ACCESS_COOKIE) ||
+    '';
+  const expected = await sha256Hex(cfg.accessToken);
+  if (!safeEqual(provided, cfg.accessToken) && !safeEqual(provided, expected)) {
+    return new Response(gatePage(path, provided ? '令牌不正确，请重试。' : ''), {
+      status: 401,
+      headers,
+    });
+  }
+
+  // Remember the login as a hash, so the raw token does not sit in the browser.
+  if (!safeEqual(readCookie(ctx.request, ACCESS_COOKIE), expected)) {
+    headers['set-cookie'] =
+      `${ACCESS_COOKIE}=${expected}; Path=/; HttpOnly; Secure; SameSite=Lax; ` +
+      `Max-Age=${ACCESS_COOKIE_TTL}`;
+  }
+  return new Response(body, { status: 200, headers });
+}
+
 function scheduleAggregate(ctx: FnContext, cfg: ServiceConfig): void {
   const now = Date.now();
   if (now - lastAggregateAt < cfg.snapshotTtlMs) return;
@@ -259,6 +320,13 @@ async function readConfig(env: Record<string, string | undefined>): Promise<Serv
     );
   }
 
+  const accessToken = env.STATS_ACCESS_TOKEN || '';
+  if (!accessToken) {
+    warnings.push(
+      'STATS_ACCESS_TOKEN is not set: "/" and "/dashboard.html" are public to anyone with the URL',
+    );
+  }
+
   const store = blobEnabled ? await getBlobStore(blobStoreName) : null;
 
   return {
@@ -272,6 +340,7 @@ async function readConfig(env: Record<string, string | undefined>): Promise<Serv
     store,
     origins,
     token: env.STATS_TOKEN || '',
+    accessToken,
     blobEnabled,
     blobStoreName,
     warnings,
@@ -307,6 +376,7 @@ async function healthPayload(cfg: ServiceConfig, url: URL) {
     snapshotCacheReady: !!cfg.store,
     origins: cfg.origins,
     aggregateEndpoint: !!cfg.token,
+    pagesProtected: !!cfg.accessToken,
     missing: cfg.missing,
     warnings: cfg.warnings,
     dashboard: new URL('/dashboard.html', url).toString(),
@@ -435,6 +505,22 @@ function safeEqual(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+function readCookie(request: Request, name: string): string {
+  const header = request.headers.get('cookie') || '';
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return '';
+      }
+    }
+  }
+  return '';
 }
 
 function methodNotAllowed(cors: Record<string, string>): Response {
