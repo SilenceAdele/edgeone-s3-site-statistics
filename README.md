@@ -155,6 +155,22 @@ All credentials come from environment variables only. No secret is hardcoded.
 `edgeone-s3-proxy`, whose FIFO eviction deletes any key missing from its own
 `__index__` manifest. The service warns about this in `/api/health`.
 
+### Access tokens
+
+`STATS_TOKEN` and `STATS_ACCESS_TOKEN` are independent and either may be left
+empty to disable that feature alone:
+
+- `STATS_TOKEN` unlocks `POST /api/aggregate` only. Without it the route answers
+  `403`.
+- `STATS_ACCESS_TOKEN` locks `/` and `/dashboard.html`. Without it both pages are
+  public. After one successful login the browser keeps a 12-hour `HttpOnly`
+  cookie holding a hash of the token, so moving from the landing page to the
+  dashboard does not ask again.
+
+Generate either with `openssl rand -hex 24`; they may share a value, but then
+changing it invalidates logins and the aggregate token at once. Both take effect
+on the next deployment.
+
 ## Wiring the blog (vitepress-theme-teek)
 
 ### 1. Send the hit
