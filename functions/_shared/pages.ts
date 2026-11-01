@@ -343,14 +343,14 @@ const GATE_STYLE = `
     .error:empty{display:none}
     label{display:block;margin-bottom:8px;font-size:12px;color:var(--muted);
           letter-spacing:.04em;text-transform:uppercase}
-    .field{display:flex;gap:8px;align-items:center}
-    input{flex:1;min-width:0;padding:11px 12px;border:1px solid rgba(44,62,80,.18);
+    .field{position:relative}
+    input{width:100%;padding:11px 44px 11px 12px;border:1px solid rgba(44,62,80,.18);
           border-radius:10px;background:rgba(255,255,255,.85);color:var(--ink);font:inherit;outline:none}
     input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(64,158,255,.18)}
-    .peek{display:grid;place-items:center;width:40px;height:40px;padding:0;
-          border:1px solid rgba(44,62,80,.18);border-radius:10px;
-          background:rgba(255,255,255,.85);color:var(--muted);cursor:pointer}
-    .peek:hover{color:var(--ink)}
+    .peek{position:absolute;top:50%;right:6px;transform:translateY(-50%);display:grid;place-items:center;
+          width:30px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;
+          color:var(--muted);cursor:pointer}
+    .peek:hover{background:rgba(64,158,255,.1);color:var(--brand)}
     .peek svg{width:17px;height:17px}
     .peek .eye-off{display:none}
     .peek.shown .eye{display:none}
